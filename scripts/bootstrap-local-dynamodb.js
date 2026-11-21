@@ -44,7 +44,15 @@ async function bootstrapLocalDynamoDB() {
   // Read and parse the CloudFormation template
   console.log(`📋 Reading template file: ${TEMPLATE_PATH}`);
   const templateContent = readFileSync(TEMPLATE_PATH, 'utf8');
-  const template = parse(templateContent);
+  // CloudFormation intrinsic function tags (e.g. !Ref, !GetAtt) are not part of
+  // standard YAML. Register them as plain-string custom tags so the parser does
+  // not emit "Unresolved tag" warnings for the Outputs section we don't use.
+  const cfnTagNames = ['Ref', 'GetAtt', 'Sub', 'Join', 'Select', 'Split', 'GetAZs', 'ImportValue', 'FindInMap', 'Base64', 'Cidr', 'If', 'And', 'Or', 'Not', 'Equals', 'Condition'];
+  const customTags = cfnTagNames.flatMap(name => ([
+    { tag: `!${name}`, collection: 'seq', resolve: (value) => ({ [`Fn::${name}`]: value }) },
+    { tag: `!${name}`, resolve: (value) => ({ [`Fn::${name}`]: value }) }
+  ]));
+  const template = parse(templateContent, { customTags });
   
   // Extract table definitions from the template
   const tables = Object.entries(template.Resources)

@@ -62,7 +62,8 @@ export const generateItems = async function (itemCount: number): Promise<any> {
   if (!result) return null;
 
   const resultMatch = result.match(/<RESULT>([\s\S]*?)<\/RESULT>/);
-  const resultContent = resultMatch ? resultMatch[1].trim() : result;
+  const resultContent = (resultMatch ? resultMatch[1].trim() : result)
+    .replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
   return yaml.load(resultContent);
 };
 
@@ -194,7 +195,8 @@ export const appraiseItem = async function (item: any): Promise<any> {
   if (!result) return null;
 
   const resultMatch = result.match(/<RESULT>([\s\S]*?)<\/RESULT>/);
-  const resultContent = resultMatch ? resultMatch[1].trim() : result;
+  const resultContent = (resultMatch ? resultMatch[1].trim() : result)
+    .replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
   return yaml.load(resultContent);
 };
 

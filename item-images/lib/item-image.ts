@@ -15,29 +15,21 @@ if (!CLOUDFRONT_DISTRIBUTION_DOMAIN_NAME) {
   throw new Error('CLOUDFRONT_DOMAIN environment variable is required');
 }
 
-const bedrockRuntime = new BedrockRuntimeClient({ region: "us-east-1" });
-const s3Client = new S3Client();
+const bedrockRuntime = new BedrockRuntimeClient({ region: "us-west-2" });
+const s3Client = new S3Client({ region: "us-west-2" });
 
 export async function generateImage(prompt) {
+  console.log(`[generateImage] Calling Stable Image Core with prompt: "${prompt}"`);
   const params = {
-    modelId: 'amazon.nova-canvas-v1:0',
+    modelId: 'stability.stable-image-core-v1:1',
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify({
-      taskType: "TEXT_IMAGE", 
-      textToImageParams: {
-        text: prompt,
-        negativeText: 'shadow, floor, human, person, realistic'
-      },
-      imageGenerationConfig: {
-        cfgScale: 9.9,
-        seed: Math.floor(Math.random() * 1000000),
-        quality: "standard", 
-        // Smallest possible size for Nova canvas (https://docs.aws.amazon.com/nova/latest/userguide/image-gen-access.html#image-gen-resolutions)
-        width: 320, 
-        height: 320,
-        numberOfImages: 1
-      }
+      prompt: prompt,
+      negative_prompt: 'shadow, floor, human, person, realistic',
+      aspect_ratio: '1:1',
+      output_format: 'png',
+      seed: Math.floor(Math.random() * 4294967295)
     })
   };
 
@@ -45,6 +37,7 @@ export async function generateImage(prompt) {
     const command = new InvokeModelCommand(params);
     const response = await bedrockRuntime.send(command);
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+    console.log(`[generateImage] Image generated successfully`);
     return responseBody.images[0];
   } catch (error) {
     console.error('Error generating image:', error);
@@ -53,6 +46,7 @@ export async function generateImage(prompt) {
 }
 
 export async function uploadToS3(imageData, fileName) {
+  console.log(`[uploadToS3] Uploading ${fileName} to bucket ${IMAGES_BUCKET_NAME}`);
   // Resize the base64 image to 320x320 pixels
   const resizedImageBuffer = await sharp(Buffer.from(imageData, 'base64'))
     .resize(320, 320)
@@ -69,7 +63,9 @@ export async function uploadToS3(imageData, fileName) {
   try {
     const command = new PutObjectCommand(params);
     await s3Client.send(command);
-    return `https://${CLOUDFRONT_DISTRIBUTION_DOMAIN_NAME}/${fileName}`;
+    const url = `https://${CLOUDFRONT_DISTRIBUTION_DOMAIN_NAME}/${fileName}`;
+    console.log(`[uploadToS3] Uploaded successfully: ${url}`);
+    return url;
   } catch (error) {
     console.error('Error uploading to S3:', error);
     throw error;
@@ -78,6 +74,7 @@ export async function uploadToS3(imageData, fileName) {
 
 export async function generateAndUploadImage(item) {
   const imagePrompt = `Single, standalone ${item.icon}. Simple, rounded pixel art design, soft pastel colors. Neutral, solid color background`;
+  console.log(`[generateAndUploadImage] Starting for item "${item.icon}"`);
   let attempts = 0;
   let imageData;
   while (attempts < 3) {
@@ -91,7 +88,8 @@ export async function generateAndUploadImage(item) {
       }
       console.log(`Image generation attempt ${attempts} failed, retrying...`);
     }
-  }  const fileName = `${item.id}.png`;
+  }
+  const fileName = `${item.id}.png`;
   const s3Url = await uploadToS3(imageData, fileName);
   return s3Url;
 }
@@ -113,12 +111,12 @@ function getItemVectorKey(item) {
  * @returns {Promise<string>} - URL of the image
  */
 export async function getImage(item, similarityThreshold = 0.25) {
+  console.log(`[getImage] Looking up image for "${item.icon}"`);
   let similarImage;
   try {
-    // Get the key for vector operations
     const itemKey = getItemVectorKey(item);
     
-    // Search for similar images in the vector store
+    console.log(`[getImage] Searching vector store for nearest match`);
     similarImage = await nearestMatch(itemKey);
 
     if (similarImage && similarImage.value.score < similarityThreshold) {
@@ -126,20 +124,20 @@ export async function getImage(item, similarityThreshold = 0.25) {
       return similarImage.value.value;
     }
     
-    // No similar image found, generate a new one
+    console.log(`[getImage] No match found, generating new image`);
     const imageUrl = await generateAndUploadImage(item);
     
-    // Store the new image with its key
+    console.log(`[getImage] Storing image URL in vector store`);
     await storeKeyValue(
-      itemKey,  // Use item icon as the key
-      imageUrl,  // Store the image URL as the value
-      { id: item.id, text: itemKey }  // Store item metadata
+      itemKey,
+      imageUrl,
+      { id: item.id, text: itemKey }
     );
     
-    console.log(`NEW: "${item.icon}" Closest match "${similarImage.value.key_text}" with score ${similarImage.value.score}: ${imageUrl}`);
+    console.log(`NEW: "${item.icon}" Closest match "${similarImage?.value?.key_text}" with score ${similarImage?.value?.score}: ${imageUrl}`);
     return imageUrl;
   } catch (error) {
-
+    console.error(`[getImage] Error for "${item.icon}":`, error);
     if (similarImage) {
       console.log(`"ERROR: ${item.icon}" fallback to "${similarImage.value.text}" with score ${similarImage.value.score}: ${similarImage.value.value}`);      
       return similarImage.value.value;
