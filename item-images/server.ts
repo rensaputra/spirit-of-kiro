@@ -14,6 +14,7 @@ const corsHeaders = {
 // Main server
 const server = serve({
   port: PORT,
+  hostname: '0.0.0.0',
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const method = req.method;
